@@ -1,0 +1,374 @@
+---
+title: "Programming in R Coursework - word count:491"
+author: "2483563"
+date: "2023-12-04"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Data Loading, Cleaning & Exploration
+
+### Loading the Data
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#load in the required packages
+library(tidyverse) #tidyverse imported for ggplot and pipes
+library(ggplot2) #for plotting
+library(vroom) #for loading in the data
+library(rstatix) #statistical analysis
+library(Hmisc) #data analysis
+library(ggpubr) #used for ggplot
+library(fitdistrplus) #for checking distriution of residuals
+library(DHARMa) #for checking of general linear mixed models (GLMMs)
+```
+
+```{r message=FALSE, warning=FALSE}
+NAO_data <- vroom("NAO_wa23772.tsv") #load in the NAO data
+mass_data <- vroom("mass_wa23772.tsv") #load in the data on weight, population, ect. 
+```
+
+```{r message=TRUE, warning=FALSE}
+summary(NAO_data) #summarise the data, check for outliers
+view(NAO_data)
+summary(mass_data) #summarise the data and observe the data structure, identify predictor variables alongside NAO. Errors include NAs in weight and numerical values in sex. 
+view(mass_data) 
+```
+
+```{r}
+NAO_data$month <- factor(NAO_data$month, levels = c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")) #making months a factor to order the plot correctly
+
+#ggplot to spot variation in NAO by month
+ggplot(data = NAO_data, aes(x = month, y = NAO)) + 
+  geom_boxplot() + 
+  geom_jitter(width = 0.25, aes(colour = year)) +
+  labs(title = "NAO Variation by Month", x = "Month", y = "NAO Index")
+
+#ggplot to check for trends in NAO by year, used geom smooth to highlight non linear data
+ggplot(data = NAO_data, aes(x = year, y = NAO)) + geom_smooth() +
+  labs(title = "Average NAO Trends Over Time", x = "Year", y = "NAO Index")
+
+# Filter data for June, July, and August
+summer_data <- subset(NAO_data, month %in% c("June", "July", "August"))
+
+# Plot NAO trend over the years for each month, checking for months which show significant differences to the others
+ggplot(data = summer_data, aes(x = year, y = NAO, color = month)) +
+  geom_smooth() +
+  labs(title = "NAO Trend in June, July, and August",
+       x = "Year",
+       y = "NAO Index") +
+  theme_minimal()
+
+
+ggplot(data = summer_data, aes(x = year, y = NAO)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(title = "NAO Trend in June, July, and August",
+       x = "Year",
+       y = "NAO Index") +
+  theme_minimal() #ggplot to view the overall increase in mean summertime NAO over the years
+
+Summer_NAO <- NAO_data[NAO_data$month %in% c("June", "July", "August"), ] #isolating the summer months for further analysis
+
+view(Summer_NAO) #viewing the summer data
+
+yearly_breakdown <- Summer_NAO %>%
+  group_by(year) %>%
+  summarise(mean_yearly_summer_NAO=mean(NAO)) #take the average NAO by year to analyse the effect of NAO by weight, taking the average NAO of each year. 
+```
+
+Plots verified summer months were the driving cause of NAO variation. NAO values across the three summer months were roughly consistent. The summer average for each year was taken.
+
+### Cleaning the Data
+
+```{r}
+#plot of weight over time indicated incorrect values in sex, use the operators to convert numerical values into NAs. 
+mass_data$sex[mass_data$sex %in% c("0", "1", "2")] <- "NA"
+mass_data$sex[mass_data$sex %in% c("na", "NA")] <- NA #incorrectly assigned NA as "NA", correcting to a factor.
+na_removed_data <- mass_data %>%
+  drop_na(sex) #dropping NA values from the dataset as sex appears to be a influential factor.
+
+#The two datasets were merged to run analysis on the effects of NAO. 
+merged_data <- merge(yearly_breakdown, na_removed_data, by = "year")
+view(merged_data) #the data has merged successfully and the mean summer NAO is provided for every year. 
+
+merged_data <- merged_data %>% 
+  drop_na(mean_yearly_summer_NAO) %>% 
+  drop_na(weight) # dropping the NAs from weight and NAO. This avoids data skew
+
+```
+
+The dataset was merged by year. The NAs and numbers in sex were removed, NAs in weight and NAO were also removed to avoid data skew.
+
+### Data Exploration
+
+```{r}
+ggplot(data = merged_data, aes(x=year, y=weight, fill=sex)) + #Plot to review weight change over time by sex
+  geom_jitter(aes(colour = age, shape = sex)) + #jitter plot used alongside smooth to check for obvious outliers
+  facet_wrap(~sex) +
+  geom_smooth() + 
+  scale_colour_gradient(low = "orange", high = "blue") +  
+  labs(title = "Population Wide Weight Over Time", x = "Year", y = "Weight") #using an orange to blue colour pallette for colour blindness accessibility. 
+
+babies_made_factoral_data <- merged_data 
+babies_made_factoral_data$sex <- factor(babies_made_factoral_data$sex, levels=c("m", "f")) #made n_babies a factor for ease of plotting from a seperate data frame
+babies_made_factoral_data$n_babies <- factor(babies_made_factoral_data$n_babies, levels=c(0, 1, 2)) #making n_babies a tiered factoral
+
+#adding a boxplot to see if n_babies has a significant impact on mean sheep weight
+ggplot(data = babies_made_factoral_data, aes(x = n_babies, y = weight, fill = sex)) + geom_boxplot() + facet_wrap(~sex) + labs(title="Number of Babies as a Determinant of Weight")
+
+ggplot(data = babies_made_factoral_data, aes(x = n_babies, y = mean_yearly_summer_NAO)) + 
+  geom_boxplot() #plot showing difference in number of offspring due to NAO variance
+```
+
+Differences in weight increase by sex were evident. No significant deviation in weight was detected due to an increase in offspring number.
+
+```{r warning=FALSE}
+ggplot(data = na_removed_data, aes(x = year, y = pop_size)) + geom_point() + 
+  geom_smooth() + 
+  labs(title = "Variations in Population Over Time", x = "Year", y = "Population Size (absolute)") #ggplot of population trends over time
+
+ggplot(data = na_removed_data, aes(x=pop_size, y = weight, colour = age)) + 
+  geom_smooth(method = "lm", fill = NA) + 
+  labs(title = "Linear Plot of Population as an Predictor of Weight", x = "Population Size (absolute)", y = "Weight (Kg)") #Linear effects of population as a predictor of weight
+```
+
+Variation on population appears to have a near significant impact on weight, and should be considered as a random effect at the very least.
+
+```{r warning=FALSE}
+ggplot(data = merged_data, aes(x = mean_yearly_summer_NAO, y = weight)) + 
+  geom_smooth(method = "lm") + 
+  labs(title = "Fitted Linear Plot of Weight Against Mean Summer NAO", x = "Mean Summer NAO", y = "Weight (Kg)") #viewing the linear trend of the data of weight against NAO
+
+ggplot(data = merged_data, aes(x = age, y = weight)) + 
+  geom_smooth(method = "lm") + 
+  labs(title = "Fitted Linear Plot of Weight Against Age", x = "Age", y = "Weight (Kg)") #viewing the linear trend of the data age vs weight
+
+ggplot(data = merged_data, aes(x = mean_yearly_summer_NAO, y = weight)) + geom_smooth() + labs(title = "Smooth Plot of Weight Against Mean Summer NAO", x = "Mean Summer NAO", y = "Weight (Kg)") #checking the smooth version to see deviation from the linear relationship
+
+ggplot(data = merged_data, aes(x = mean_yearly_summer_NAO, y = pop_size)) + 
+  geom_smooth() + 
+  geom_jitter() + 
+  labs(title = "Smooth Plot of Population Size Against Mean Summer NAO", x = "Mean Summer NAO", y = "Population Size (Yearly Total)")# checking for NAO influence on pop_size - pop size has a minor influence on sheep weight
+
+ggplot(data = merged_data, aes(x = weight)) + 
+  geom_histogram(binwidth = 0.2, colour = "red", fill = "lightpink") + 
+  labs(title = "Distribution of Weight Across Entire Data Set", x = "Weight Bin", y = "Frequency of Weight Value Bin") #weight distribution across the total population
+
+ggplot(data = merged_data, aes(x = weight, fill = sex)) + 
+  geom_histogram(binwidth = 0.2) + 
+  labs(title = "Distribution of Weight Across Entire Data Set", x = "Weight Bin", y = "Frequency of Weight Value Bin") + facet_wrap(~sex) #weight ditribution faceted by sex. 
+
+ggplot(data = merged_data, aes(x = mean_yearly_summer_NAO*100)) + 
+  geom_histogram(binwidth = 4, colour = "blue", fill = "lightblue") + 
+  labs(title = "Distribution of Mean Summer NAO Across Entire Data Set", x = "NAO bin", y = "Frequency of NAO Value Bin") #checking for normal distribution of data in NAO, * 100 for ease of viewing. 
+
+ggplot(data = merged_data, aes(x=year, y=weight, fill=site)) + 
+  geom_smooth() + 
+  facet_wrap(~site) #ggplot highlighting differences between sites, when looking at variation in mean weight over time
+
+ggplot(data = merged_data, aes(x = mean_yearly_summer_NAO, y = pop_size)) + 
+  geom_smooth(method = "lm") +
+  labs(title = "NAO as a Determinant of Population Size", x = "NAO", y = "Population Size")#plot investigating the "linear" relationship between NAO and population. 
+
+ggplot(data = merged_data, aes(x = mean_yearly_summer_NAO, y = weight, colour = ID)) + geom_smooth() + labs(title = "Plot of Weight Against Mean Summer NAO", x = "Mean Summer NAO", y = "Weight (Kg)") #checking the smooth version to see deviation from the linear relationship
+```
+
+We can observe that NAO, age and sex had an impact on weight. Other variables are likely influential. Population size, site and NAOs effect on pop size were deemed likely to have an impact on weight.
+
+```{r}
+?fitdist()
+library(fitdistrplus) 
+
+fit <- fitdist(merged_data$weight, "norm") #checking residuals and 
+plot(fit)
+```
+
+```{r warning=FALSE}
+ggqqplot(data = merged_data, x = "weight") 
+ggqqplot(data = merged_data, x = "mean_yearly_summer_NAO")
+
+library(e1071)
+class(merged_data$mean_yearly_summer_NAO) #checking the data class 
+length(merged_data$mean_yearly_summer_NAO) #checking the number of data points
+any(is.na(merged_data$mean_yearly_summer_NAO)) #checking for NA values
+NAO_skewness <- skewness(merged_data$mean_yearly_summer_NAO) #checking for skew in the data
+NAO_skewness
+```
+
+A skew of the NAO QQ-plot appears, however testing using the skew function from the e1071 library indicated the residual distribution to be roughly symmetrical.
+
+# Determining Significant Factors
+
+```{r}
+cor.test(merged_data$mean_yearly_summer_NAO, merged_data$weight, method = "spearman") #
+
+lm_pop_size <- lm(pop_size ~ mean_yearly_summer_NAO, data = merged_data) #model to assess NAO impact on pop size
+lm_weight_NAO <- lm(weight ~ mean_yearly_summer_NAO, data = merged_data) #model to assess NAO impact on weight - verifying the earlier spearman's rank via anova
+lm_weight_popsize <- lm(weight ~ pop_size, data = merged_data) #model assessing impact of pop_size on weight
+
+lm_weight_sex <- lm(weight ~ sex, data = merged_data) #model assessing impact of sex on weight
+
+lm_weight_site <- lm(weight ~ site, data = merged_data) #assessing impact of site on weight
+
+lm_all <- lm(weight ~ mean_yearly_summer_NAO + sex + age + pop_size, data = merged_data) #assessing all effecting variables in a model
+
+lm_all_interaction <- lm(weight ~ mean_yearly_summer_NAO + sex + age + pop_size + year:mean_yearly_summer_NAO, data = merged_data) #assessing all effecting variables in a model
+
+anova(lm_pop_size)
+anova(lm_weight_NAO)
+anova(lm_weight_popsize)
+anova(lm_weight_sex)
+anova(lm_weight_site)
+anova(lm_all)
+anova(lm_all_interaction)
+```
+
+ANOVA tests (high F-values and low p-values) indicated sex, NAO and age are all significant predictors to weight; pop_size, site and ID have an effect. ID and pop_size were added as random effects.
+
+# Fitting/Testing the GLM
+
+```{r}
+library(broom)
+?glm()
+glm_model <- glm(weight ~ age + mean_yearly_summer_NAO + sex, data = merged_data, family = gaussian) #setting a glm model to see if mixedeffects and interactions are necessary for a functional model
+summary(glm_model)
+tidy(glm_model) #using the tidy method to coroborate summary findings 
+```
+
+The glm indicates the significance of the three predictors, high AIC and residual deviance indicate significant variation in weight is unaccounted for.
+
+```{r message=FALSE, warning=FALSE}
+library(performance)
+
+check_model(glm_model) 
+fit <-fitdist(merged_data$weight, "norm")
+plot(fit)
+gofstat(fit)
+
+qqnorm(residuals(glm_model)) #qq residual plot of my glm model
+qqline(residuals(glm_model), col = "red") #qqlineplot to check the residuals are evenly distributed
+
+fitted_values <- fitted(glm_model)
+residual_values <- residuals(glm_model)
+fitted_v_residual_data <- data.frame(fitted_values, residual_values)#vreating a dataframe for plotting
+
+ggplot(data = fitted_v_residual_data, aes(y = residual_values, x= fitted_values)) + 
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, col = "red") #ggplot showing the fitted vs residual values - checking for patterns indicating non linear data  
+
+ggplot(data = fitted_v_residual_data, aes(x = residual_values)) + 
+  geom_histogram(binwidth = 0.1, fill = "steelblue", col = "blue", alpha = 0.5) +
+  theme_classic() +#histogram of model residuals, normal residuals produce a bell shape
+  labs(title = "Histogram of GLM Model Residuals", x = "Residual Values", y = "Count")
+
+##visualize the fitted vs observed values - this was done to indicate model fit of the glm and assess necessity of the glmm
+fit_data <- data.frame("predicted"= glm_model$fitted.values,
+                       "observed" = merged_data$weight)
+##plot them
+ggplot(fit_data, aes(x=observed, y=predicted)) + 
+  geom_point() + 
+  ##add a 1:1 line
+  geom_abline(intercept = 0) +
+  ##add a linear regression to your data
+  geom_smooth(method="lm",
+              col="lightblue",
+              se = F)   +
+  labs(title = "Plot of Predicted vs Observed Values ", x = "Observed Values", y = "Predicted Values")
+
+testOutliers(glm_model) #testing for outliers which deviate significantly to what is expected by the model
+```
+
+While the model indicates predominantly normal residuals/variance. However the fitted vs observed plot indicated unexplained variance. These are not explained by outliers so a glmm was appropriate.
+
+# Fitting/Testing the GLMM
+
+```{r message=FALSE, warning=FALSE}
+library(lme4)
+library(glmmTMB) 
+library(tidyr)
+library(car)
+library(MuMIn)
+
+
+model_correct <- glmmTMB(weight ~ age + mean_yearly_summer_NAO + sex + (1|ID) + (1|pop_size), data = merged_data, family = gaussian())
+
+summary(model_correct)
+
+model_pop <- glmmTMB(weight ~ age + mean_yearly_summer_NAO + sex + mean_yearly_summer_NAO:pop_size + (1|ID) + (1|pop_size), data = merged_data, family = gaussian())
+
+
+
+model_correct_residuals <- residuals(model_correct)
+shapiro.test(model_correct_residuals) #shapiro test to check for normal distribution of the GLMM
+
+anova(model_correct, model_pop) #anova to test model suitability and fit
+BIC(model_correct, model_pop) #A Bayesian Information Criterion between models
+AIC(model_correct, model_pop) #Akaike Information Criterion test between models
+```
+
+Shapiro test indicated normality, so gaussian family was appropriate. AIC, ANOVA and BIC indicate the model_correct is the best fit.
+
+### R²c and R²m - Determining Model's Explanatory Coverage
+
+```{r message=FALSE, warning=FALSE}
+library(MuMIn) #package for predicting R-squared values
+r.squaredGLMM(model_correct) #performing an R test provided an idea as to the explanatory capcity of the model being tested
+r.squaredGLMM(model_pop) #due to similar AIC and BIC values, model was tested for increased explanatory power
+```
+
+The marginal R-squared value indicated that fixed effects account for 82% of the variance in weight. The conditional R-squared (variance explained by fixed and random effects) accounted for 96%. As the models explanatory coverage is similar, the model_correct is the simplest model which explains the predictors of weight, Ockham's razor indicates it is the best option.
+
+### Visual Diagnostic Checks
+
+```{r}
+residuals_summary <- summary(residuals(model_correct)) #checking for normal residual range centered around 0
+print(residuals_summary)
+
+na_in_residuals <- any(is.na(residuals(model_correct))) #checking for NA values
+print(na_in_residuals)
+```
+
+```{r}
+library(ggpubr)
+# Recreate the simulated residuals
+simulation_output <- simulateResiduals(fittedModel = model_correct)
+
+residuals_correct <- residuals(model_correct) #making residual data
+
+# Plot the residuals
+plot(simulation_output) # checking for homoscedasticity, normality, any patterns indicating model misfitting 
+testOutliers(simulation_output) # testing for significantly significant outliers
+testUniformity(simulation_output) #testing for uniform distribution of residuals
+testDispersion(simulation_output) #checking for over or underdispersion
+testQuantiles(simulation_output) #checking observed quantiles meet expected quantiles
+
+plot(fitted(model_correct), residuals(model_correct), xlab = "Fitted Values", ylab = "Residuals", main = "Fitted Values vs Residuals")
+abline(h = 0, col = "red") #redoing residual check directly from the model
+
+ggqqplot(residuals_correct, main = "QQ-plot of Residuals") #qqplot of residuals, testing for normality
+
+hist(residuals(model_correct), main = "Histogram of Residuals", xlab = "Residuals")
+
+plot(fitted(model_correct), sqrt(abs(residuals_correct)), main = "Fitted Values vs Square Root of Absolute Residuals", xlab = "Fitted Values", ylab = "Square Root of Absolute Residuals")
+abline(h = 0.5, col = "turquoise")#square root of absolute residuals plotted to observe any patterns indicating poor data fit
+```
+
+Outlier test indicated no significant skewness. The dispersion of the model=1.01 and the p-value=0.8 indicated no significant over-dispersion. The residual quantiles were not where the model indicates they should be, however they were a close fit. The above plots indicate limited model bias, normal residual distribution and normality of variance. While the KS-test indicated the data does not model the expected distribution, other plots indicate normal distribution, so the model was taken forward regardless.
+
+### Final Model Checks
+
+```{r}
+p <- predict(model_correct, type = "response") #form the predicted dataset from the selected model
+
+fit <- data.frame("predicted" = p, "observed" = merged_data$weight) #fit the predicted and observed values based on raw data 
+
+plot(fit) #initial plot of expected vs observed values
+
+ggplot(fit, aes(x = predicted, y = observed)) +
+  geom_point() +
+  geom_smooth(method = "lm", col = "purple") +  
+  geom_abline(intercept = 0, slope = 1, col = "orange", linetype = "twodash") +
+  labs(x = "Predicted Values", y = "Observed Values", title = "Plot of Model Predicted Values Against Observed Values") #ggplot of the previous plot of observed vs predicted values - using a theoretical dotted orange line for where the predicted values are equal to observed 
+```
+
+A \~1:1 relationship between predicted and observed weight indicates a robust predictive capacity for the GLMM to predict the effectors of weight in the Soay Sheep population. The interactions between weight, age, summer NAO and sex are effectively modelled as predictors and the random effects ID and population are appropriately accounted for.
